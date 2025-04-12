@@ -1,7 +1,13 @@
 from flask import Flask, request, jsonify
 import uuid #creates the unique id
+import requests
+import time
 import os
+import threading
 
+PORT = int(os.environ.get("PORT", 5000))
+BOOTSTRAP_URL = os.environ.get("BOOTSTRAP", "http://localhost:5000")
+ 
 #initializes flask app
 app = Flask(__name__)
 
@@ -38,6 +44,21 @@ def receive_message():
 def get_peers():
     return jsonify({"peers": list(peers)})
 
+def register_with_bootstrap(): 
+    try: 
+        peer_url = f"http://localhost:{PORT}"
+        res = requests.post(f"{BOOTSTRAP_URL}/register", json={"peer": peer_url})
+        if res.status_code == 200: 
+            new_peers = res.json().get("peers", [])
+            peers.update(new_peers)
+            peers.discard(peer_url) #Removes port if already exists 
+            print(f"[Node {node_id}] Discovered peers: {peers}")
+    except Exception as e: 
+        print(f"Error registering with bootstrap: {e}")
+
+threading.Thread(target=register_with_bootstrap).start()
+
+app.run(host='0.0.0.0', port=PORT)
 #starts the app
 if __name__== "__main__":
     app.run(host= "0.0.0.0", port=5000)
