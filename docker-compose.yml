@@ -35,7 +35,7 @@ services:
       - PORT=5003
       - BOOTSTRAP=http://bootstrap:5000
     ports:
-      - "5003:5000"
+      - "5503:5000"
     depends_on:
       - bootstrap
 
