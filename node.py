@@ -1,66 +1,84 @@
-from flask import Flask, request, jsonify
-import uuid #creates the unique id
-import requests
-import time
-import os
 import threading
+import time
+import requests
+import uuid
+from flask import Flask, request, jsonify
+from datetime import datetime
 
-PORT = int(os.environ.get("PORT", 5000))
-BOOTSTRAP_URL = os.environ.get("BOOTSTRAP", "http://localhost:5000")
- 
-#initializes flask app
 app = Flask(__name__)
 
-#generate random id
-node_id = str(uuid.uuid4())
-
-#stores known peers
+# Unique ID and peer list
+node_id = str(uuid.uuid4())[:8]  # Shortened for clearer logs
 peers = set()
+bootstrap_url = "http://bootstrap:5000"  # Use container name within Docker network
 
-#message with id 
-@app.route('/')
-def index():
-    return jsonify({"message": f"Node {node_id} is running!"})
 
-#registers the peer 
 @app.route('/register', methods=['POST'])
 def register_peer():
     data = request.get_json()
-    peer = data.get('peer')
-    if peer: 
-        peers.add(peer)
-        return jsonify({"status": "peer registered", "peers": list(peers)}), 200
-    return jsonify({"error": "no peer provide"}), 400
+    peer_url = data.get("peer")
+    if peer_url and peer_url != request.host_url.strip('/'):
+        peers.add(peer_url)
+        print(f"[{node_id}] Registered new peer: {peer_url}")
+        return jsonify({"status": "peer registered", "peers": list(peers)})
+    return jsonify({"status": "failed", "reason": "invalid peer"}), 400
+
+
+@app.route('/peers', methods=['GET'])
+def get_peers():
+    return jsonify(list(peers))
+
 
 @app.route('/message', methods=['POST'])
 def receive_message():
     data = request.get_json()
     sender = data.get('sender')
-    msg = data.get('msg')
-    print(f"Received message from {sender}: {msg}")
-    return jsonify({"status": "received"}), 200 
+    msg = data.get("msg")
 
-@app.route('/peers', methods=['GET'])
-def get_peers():
-    return jsonify({"peers": list(peers)})
-
-def register_with_bootstrap(): 
-    try: 
-        peer_url = f"http://localhost:{PORT}"
-        res = requests.post(f"{BOOTSTRAP_URL}/register", json={"peer": peer_url})
-        if res.status_code == 200: 
-            new_peers = res.json().get("peers", [])
-            peers.update(new_peers)
-            peers.discard(peer_url) #Removes port if already exists 
-            print(f"[Node {node_id}] Discovered peers: {peers}")
-    except Exception as e: 
-        print(f"Error registering with bootstrap: {e}")
-
-threading.Thread(target=register_with_bootstrap).start()
-
-app.run(host='0.0.0.0', port=PORT)
-#starts the app
-if __name__== "__main__":
-    app.run(host= "0.0.0.0", port=5000)
+    
+    print(f"[{datetime.now().strftime('%I:%M:%S %p')}] Message received from {sender}: {msg}", flush=True)
 
 
+    return jsonify({"status": "message received"}), 200
+
+
+def register_with_bootstrap():
+    time.sleep(2)  # Let Flask fully start
+    try:
+        my_url = f"http://{get_container_ip()}:5000"
+        res = requests.post(f"{bootstrap_url}/register", json={"peer": my_url})
+        if res.ok:
+            print(f"[{node_id}] Registered with bootstrap. My URL: {my_url}")
+            peers.update(res.json().get("peers", []))
+        else:
+            print(f"[{node_id}] Failed to register. Response: {res.status_code}")
+    except Exception as e:
+        print(f"[{node_id}] Error registering with bootstrap: {e}")
+
+
+def get_container_ip():
+    import socket
+    return socket.gethostbyname(socket.gethostname())
+
+
+def update_peers():
+    while True:
+        current_peers = list(peers)
+        for peer in current_peers:
+            try:
+                res = requests.get(f"{peer}/peers", timeout=3)
+                if res.ok:
+                    new_peers = set(res.json())
+                    if new_peers - peers:
+                        print(f"[{node_id}] New peers discovered: {new_peers - peers}")
+                    peers.update(new_peers)
+            except Exception as e:
+                print(f"[{node_id}] Failed to contact {peer}: {e}")
+        time.sleep(10)
+
+
+if __name__ == '__main__':
+    print(f" Node starting up with ID: {node_id}")
+    threading.Thread(target=register_with_bootstrap).start()
+    threading.Thread(target=update_peers).start()
+    app.run(host='0.0.0.0', port=5000)
