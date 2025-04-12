@@ -25,6 +25,19 @@ def register_peer():
         peers.add(peer)
         return jsonify({"status": "peer registered", "peers": list(peers)}), 200
     return jsonify({"error": "no peer provide"}), 400
+
+@app.route('/message', methods=['POST'])
+def receive_message():
+    data = request.get_json()
+    sender = data.get('sender')
+    msg = data.get('msg')
+    print(f"Received message from {sender}: {msg}")
+    return jsonify({"status": "received"}), 200 
+
+@app.route('/peers', methods=['GET'])
+def get_peers():
+    return jsonify({"peers": list(peers)})
+
 #starts the app
 if __name__== "__main__":
     app.run(host= "0.0.0.0", port=5000)
